@@ -115,13 +115,18 @@ RULES:
 
 # ── Storyboard Generation ─────────────────────────────────────
 
-async def generate_storyboard(concept: str, target_audience: str = "high school students") -> Storyboard:
+async def generate_storyboard(
+    concept: str,
+    target_audience: str = "high school students",
+    duration_mode: str = "standard",
+) -> Storyboard:
     """
     Generate a structured storyboard using Gemini with native structured output.
 
     Args:
         concept: The educational concept to explain (e.g., "Newton's Laws of Motion")
         target_audience: Target viewer demographic
+        duration_mode: "quick" (3-4 scenes), "standard" (4-6 scenes), or "deep_dive" (6-8 scenes)
 
     Returns:
         A validated Storyboard instance with normalized scenes.
@@ -134,11 +139,17 @@ async def generate_storyboard(concept: str, target_audience: str = "high school 
 
     client = genai.Client(api_key=GEMINI_API_KEY)
 
+    scene_guide = {
+        "quick": "Create exactly 3 to 4 concise scenes (targeting 45-60 seconds total video duration).",
+        "standard": "Create exactly 4 to 6 engaging scenes (targeting 90-120 seconds total video duration).",
+        "deep_dive": "Create 6 to 8 comprehensive scenes (targeting 3-4 minutes total video duration with in-depth explanations).",
+    }.get(duration_mode, "Create 4 to 6 concise scenes.")
+
     user_prompt = (
         f"Create an engaging educational storyboard about: {concept}\n"
         f"Target audience: {target_audience}\n\n"
-        f"The video must be structured with 4-6 concise, visually distinct scenes. "
-        f"Begin with a title card slide, follow with core concepts, bullet points, and illustrative visuals."
+        f"{scene_guide}\n"
+        f"Begin with a title card slide, follow with core concepts, bullet points, and real illustrative stock image scenes."
     )
 
     max_retries = 3

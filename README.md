@@ -125,7 +125,7 @@ Checks if the service is running and reports active jobs.
 ---
 
 ### 2. Start Video Generation
-Dispatches a video generation job to the background queue.
+Dispatches a video generation job to the bounded background worker queue.
 
 - **URL**: `POST /generate`
 - **Headers**: `Content-Type: application/json`
@@ -133,75 +133,57 @@ Dispatches a video generation job to the background queue.
 ```json
 {
   "concept": "Newton's Laws of Motion",
-  "target_audience": "high school students"
+  "target_audience": "high school students",
+  "duration_mode": "standard",
+  "voice": "en-US-AriaNeural",
+  "include_music": false,
+  "webhook_url": "https://myapp.com/api/webhooks/video"
 }
 ```
 
-- **PowerShell Example**:
-```powershell
-$body = @{
-    concept = "Newton's Laws of Motion"
-    target_audience = "high school students"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri "http://localhost:8000/generate" -Method Post -ContentType "application/json" -Body $body
-```
-
-- **cURL Example**:
-```bash
-curl -X POST "http://localhost:8000/generate" \
-     -H "Content-Type: application/json" \
-     -d '{"concept": "Photosynthesis", "target_audience": "middle school"}'
-```
+- **Parameters**:
+  - `concept` *(required)*: Educational topic or concept (3 to 500 characters).
+  - `target_audience` *(optional)*: Target demographic (default: `"high school students"`).
+  - `duration_mode` *(optional)*: Video length depth: `"quick"` (~45s), `"standard"` (~90s, default), or `"deep_dive"` (~3-4 min).
+  - `voice` *(optional)*: Edge-TTS neural voice (default: `"en-US-AriaNeural"`).
+  - `include_music` *(optional)*: Layer subtle background music with audio ducking (default: `false`).
+  - `webhook_url` *(optional)*: HTTP URL to receive a POST callback upon job completion or failure.
 
 - **Response (HTTP 202 Accepted)**:
 ```json
 {
   "job_id": "0ff1a676-cfd4-480d-8660-cd49a3cbe34e",
   "status": "queued",
-  "message": "Video generation started. Poll /status/0ff1a676-cfd4-480d-8660-cd49a3cbe34e for progress."
+  "queue_position": 1,
+  "message": "Job queued at position 1. Poll /status/0ff1a676-cfd4-480d-8660-cd49a3cbe34e for updates."
 }
 ```
 
 ---
 
 ### 3. Poll Job Progress
-Track generation stages and completion status.
+Track generation stages, queue position, and completion status.
 
 - **URL**: `GET /status/{job_id}`
-- **PowerShell Example**:
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8000/status/<job_id>"
-```
-
-- **Response (In Progress)**:
-```json
-{
-  "job_id": "0ff1a676-cfd4-480d-8660-cd49a3cbe34e",
-  "status": "generating_visuals",
-  "progress_pct": 55,
-  "current_stage": "Visuals: scene 2/5 (slide)",
-  "error": null,
-  "video_url": null,
-  "created_at": "2026-09-22T06:00:52Z",
-  "updated_at": "2026-09-22T06:01:20Z"
-}
-```
 
 - **Response (Completed)**:
 ```json
 {
   "job_id": "0ff1a676-cfd4-480d-8660-cd49a3cbe34e",
+  "concept": "Newton's Laws of Motion",
+  "target_audience": "high school students",
   "status": "completed",
   "progress_pct": 100,
   "current_stage": "Video generation complete!",
+  "queue_position": null,
   "error": null,
-  "video_url": "/download/0ff1a676-cfd4-480d-8660-cd49a3cbe34e"
+  "video_url": "/download/0ff1a676-cfd4-480d-8660-cd49a3cbe34e",
+  "subtitles_url": "/subtitles/0ff1a676-cfd4-480d-8660-cd49a3cbe34e",
+  "duration_seconds": 92.4,
+  "created_at": "2026-10-06T16:00:52Z",
+  "updated_at": "2026-10-06T16:02:15Z"
 }
 ```
-
-**Job Status Lifecycle:**
-`queued` ➔ `storyboarding` ➔ `generating_audio` ➔ `generating_visuals` ➔ `assembling` ➔ `completed` (or `failed`)
 
 ---
 
@@ -210,10 +192,21 @@ Streams the generated 1080p MP4 file.
 
 - **URL**: `GET /download/{job_id}`
 - **Browser/VLC**: Open `http://localhost:8000/download/{job_id}` directly in your browser or video player.
-- **PowerShell Download**:
-```powershell
-Invoke-WebRequest -Uri "http://localhost:8000/download/<job_id>" -OutFile "output_video.mp4"
-```
+
+---
+
+### 5. Download Subtitles (.srt)
+Download the synchronized `.srt` subtitle file.
+
+- **URL**: `GET /subtitles/{job_id}`
+
+---
+
+### 6. List Recent Jobs
+Inspect recent jobs with pagination.
+
+- **URL**: `GET /jobs?limit=20`
+
 
 ---
 

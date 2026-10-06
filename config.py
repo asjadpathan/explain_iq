@@ -23,10 +23,24 @@ VIDEO_WIDTH: int = int(os.getenv("VIDEO_WIDTH", "1920"))
 VIDEO_HEIGHT: int = int(os.getenv("VIDEO_HEIGHT", "1080"))
 VIDEO_FPS: int = int(os.getenv("VIDEO_FPS", "24"))
 
-# ── Directory Paths ────────────────────────────────────────────
-OUTPUT_DIR: Path = Path(os.getenv("OUTPUT_DIR", "./output")).resolve()
-TEMP_DIR: Path = Path(os.getenv("TEMP_DIR", "./tmp")).resolve()
+# ── Media & Image Configuration ────────────────────────────────
+PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
+
+# ── Microservice & Worker Settings ─────────────────────────────
+MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
+
+# ── Directory Paths & Database ─────────────────────────────────
+BASE_DIR: Path = Path(__file__).parent.resolve()
+OUTPUT_DIR: Path = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "output")).resolve()
+TEMP_DIR: Path = Path(os.getenv("TEMP_DIR", BASE_DIR / "tmp")).resolve()
+ASSETS_DIR: Path = BASE_DIR / "assets"
+FONTS_DIR: Path = ASSETS_DIR / "fonts"
+AUDIO_DIR: Path = ASSETS_DIR / "audio"
+DB_PATH: Path = Path(os.getenv("DB_PATH", BASE_DIR / "jobs.db")).resolve()
 
 # Ensure directories exist at import time
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+FONTS_DIR.mkdir(parents=True, exist_ok=True)
+AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+

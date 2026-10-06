@@ -14,7 +14,7 @@ from typing import Optional, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
-from config import VIDEO_WIDTH, VIDEO_HEIGHT
+from config import VIDEO_WIDTH, VIDEO_HEIGHT, FONTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,23 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 def _get_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
-    """Load standard system font with graceful fallback."""
+    """Load bundled font or standard system font with graceful fallback."""
+    # First check bundled fonts in assets/fonts/
+    bundled_names = ["Inter-Bold.ttf" if bold else "Inter-Regular.ttf", "font.ttf"]
+    for b_name in bundled_names:
+        p = FONTS_DIR / b_name
+        if p.exists():
+            try:
+                return ImageFont.truetype(str(p), size)
+            except Exception:
+                pass
+
     font_candidates = [
-        "segoeui.ttf", "segoeuib.ttf" if bold else "segoeui.ttf",
+        "segoeuib.ttf" if bold else "segoeui.ttf",
         "arialbd.ttf" if bold else "arial.ttf",
         "arial.ttf",
         "calibri.ttf",
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
     ]
     for font_name in font_candidates:
         try:

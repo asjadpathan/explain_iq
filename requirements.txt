@@ -7,4 +7,3 @@ mutagen
 python-dotenv
 Pillow
 uvicorn
-
