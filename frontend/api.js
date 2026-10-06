@@ -39,7 +39,13 @@ class ExplainIQApi {
       return this.cleanUrl(saved);
     }
 
-    // 3. Check production constant if specified
+    // 3. Check Vercel environment variable (injected during build)
+    const envBackendUrl = typeof window !== 'undefined' && window.__ENV && window.__ENV.BACKEND_URL;
+    if (envBackendUrl && envBackendUrl.trim()) {
+      return this.cleanUrl(envBackendUrl);
+    }
+
+    // 4. Check production constant if specified
     if (PRODUCTION_BACKEND_URL && PRODUCTION_BACKEND_URL.trim()) {
       return this.cleanUrl(PRODUCTION_BACKEND_URL);
     }
