@@ -1,9 +1,13 @@
 /**
  * Explain IQ Studio — Microservice API Client
  * ===========================================
- * Connects to the FastAPI backend with flexible base URL resolution.
- * Supports running natively from FastAPI (same origin) or Vercel static deployments.
+ * Connects to the FastAPI backend.
+ *
+ * 🔧 PRODUCTION BACKEND URL CONFIGURATION:
+ * When your Render backend is deployed, paste its URL here:
+ * (e.g. const PRODUCTION_BACKEND_URL = "https://explain-iq.onrender.com";)
  */
+const PRODUCTION_BACKEND_URL = "";
 
 class ExplainIQApi {
   constructor() {
@@ -13,20 +17,39 @@ class ExplainIQApi {
   }
 
   /**
-   * Determine starting backend URL based on host environment & localStorage.
+   * Determine starting backend URL silently without exposing any UI links.
    */
   resolveInitialBaseUrl() {
+    // 1. Check for silent parameter: https://your-site.vercel.app?backend=https://your-render-url.onrender.com
+    if (typeof window !== 'undefined' && window.location) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('backend')) {
+        const qUrl = this.cleanUrl(params.get('backend'));
+        if (qUrl) {
+          localStorage.setItem(this.STORAGE_KEY, qUrl);
+          window.history.replaceState({}, document.title, window.location.pathname);
+          return qUrl;
+        }
+      }
+    }
+
+    // 2. Check saved browser storage
     const saved = localStorage.getItem(this.STORAGE_KEY);
     if (saved) {
       return this.cleanUrl(saved);
     }
 
-    // If served on port 8000 or same host as backend, default to current origin
+    // 3. Check production constant if specified
+    if (PRODUCTION_BACKEND_URL && PRODUCTION_BACKEND_URL.trim()) {
+      return this.cleanUrl(PRODUCTION_BACKEND_URL);
+    }
+
+    // 4. Same origin (when served directly from FastAPI)
     if (window.location.port === '8000') {
       return window.location.origin;
     }
 
-    // Default to local FastAPI address (can be changed via UI for Vercel)
+    // 5. Default local fallback
     return this.defaultLocalUrl;
   }
 

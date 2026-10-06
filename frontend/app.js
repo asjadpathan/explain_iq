@@ -63,24 +63,11 @@ class ExplainIQStudio {
     this.historySearch = document.getElementById('history-search-input');
     this.btnRefreshHistory = document.getElementById('btn-refresh-history');
 
-    // Settings Modal (Vercel Backend URL)
-    this.settingsModal = document.getElementById('settings-modal');
-    this.btnOpenSettings = document.getElementById('btn-open-settings');
-    this.btnCloseSettings = document.getElementById('btn-close-settings');
-    this.backendUrlInput = document.getElementById('backend-url-input');
-    this.btnSaveSettings = document.getElementById('btn-save-settings');
-    this.btnTestConnection = document.getElementById('btn-test-connection');
-    this.testResultBox = document.getElementById('connection-test-result');
-    this.testIcon = document.getElementById('test-icon');
-    this.testText = document.getElementById('test-text');
-    this.presetLocalBtn = document.getElementById('preset-local-url');
-    this.presetOriginBtn = document.getElementById('preset-same-origin');
   }
 
   init() {
     this.bindNavigation();
     this.bindFormInteractions();
-    this.bindSettingsModal();
     this.bindHistoryEvents();
 
     // Initial Telemetry & History Fetch
@@ -511,52 +498,7 @@ class ExplainIQStudio {
 
   /* ── 6. Settings Modal (Vercel Backend Switcher) ───────────────── */
 
-  bindSettingsModal() {
-    this.btnOpenSettings.addEventListener('click', () => {
-      this.backendUrlInput.value = window.api.getBaseUrl();
-      this.testResultBox.style.display = 'none';
-      this.settingsModal.style.display = 'flex';
-    });
-
-    this.btnCloseSettings.addEventListener('click', () => {
-      this.settingsModal.style.display = 'none';
-    });
-
-    this.presetLocalBtn.addEventListener('click', () => {
-      this.backendUrlInput.value = 'http://localhost:8000';
-    });
-
-    this.presetOriginBtn.addEventListener('click', () => {
-      this.backendUrlInput.value = window.location.origin;
-    });
-
-    this.btnTestConnection.addEventListener('click', async () => {
-      const testUrl = this.backendUrlInput.value.trim();
-      this.testResultBox.style.display = 'flex';
-      this.testResultBox.className = 'connection-test-result';
-      this.testText.textContent = 'Pinging /health endpoint...';
-
-      try {
-        const result = await window.api.checkHealth(testUrl);
-        this.testResultBox.className = 'connection-test-result success';
-        this.testText.textContent = `Connected! Engine status: ${result.status} (${result.service})`;
-      } catch (err) {
-        this.testResultBox.className = 'connection-test-result error';
-        this.testText.textContent = `Connection error: ${err.message}`;
-      }
-    });
-
-    this.btnSaveSettings.addEventListener('click', () => {
-      const newUrl = this.backendUrlInput.value.trim();
-      window.api.setBaseUrl(newUrl);
-      this.settingsModal.style.display = 'none';
-      this.showToast(`Backend updated: ${newUrl}`, 'success');
-      this.updateTelemetry();
-      this.refreshHistory();
-    });
-  }
-
-  /* ── 7. Utilities & Toasts ─────────────────────────────────────── */
+  /* ── 6. Utilities & Toasts ─────────────────────────────────────── */
 
   showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
