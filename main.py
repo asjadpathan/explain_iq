@@ -23,6 +23,7 @@ from typing import Literal, Optional, List
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import (
@@ -367,6 +368,13 @@ async def download_subtitles(job_id: str):
 async def list_recent_jobs(limit: int = Query(20, ge=1, le=100)):
     """List recent video generation jobs."""
     return database.list_jobs(limit=limit)
+
+
+# ── Frontend Static Files (Explain IQ Studio) ──────────────────
+frontend_dir = Path(__file__).parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+
 
 
 # ── Pipeline Worker with Concurrency Semaphore ────────────────
