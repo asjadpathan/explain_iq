@@ -9,22 +9,36 @@ No AI image generation — fetches real, high-resolution photography and graphic
 import asyncio
 import json
 import logging
-import random
+import os
+import re
+import ssl
 import textwrap
 import urllib.parse
 import urllib.request
+from io import BytesIO
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import edge_tts
 from mutagen.mp3 import MP3
 from PIL import Image, ImageDraw, ImageFont
 
-from config import TTS_VOICE, VIDEO_WIDTH, VIDEO_HEIGHT, PEXELS_API_KEY
+from config import TTS_VOICE, VIDEO_WIDTH, VIDEO_HEIGHT, PEXELS_API_KEY, FONTS_DIR
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT = "ExplainIQ/1.0 (Educational Explainer Video Microservice; contact@explainiq.local)"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+
+def _create_ssl_context():
+    """Create a permissive SSL context for Windows compatibility."""
+    ctx = ssl.create_default_context()
+    try:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    except Exception:
+        pass
+    return ctx
 
 
 # ── TTS Audio & Subtitle Generation ────────────────────────────
@@ -38,9 +52,6 @@ async def generate_tts(
     """
     Generate TTS audio for narration text using Microsoft Edge neural voices.
     Also extracts word boundary timestamps for .srt subtitle generation.
-
-    Returns:
-        Tuple of (path to saved .mp3, duration in seconds).
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Generating TTS: {len(text)} chars → {output_path.name}")
@@ -48,7 +59,6 @@ async def generate_tts(
     communicate = edge_tts.Communicate(text, voice)
     sub_maker = getattr(edge_tts, "SubMaker", None)() if hasattr(edge_tts, "SubMaker") else None
 
-    # Stream audio data and capture word boundaries
     with open(output_path, "wb") as audio_file:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -56,7 +66,6 @@ async def generate_tts(
             elif chunk["type"] == "WordBoundary" and sub_maker is not None:
                 sub_maker.feed(chunk)
 
-    # Save scene SRT if requested and available
     if srt_output_path and sub_maker is not None:
         try:
             srt_content = sub_maker.get_srt()
@@ -66,7 +75,6 @@ async def generate_tts(
         except Exception as e:
             logger.warning(f"Could not generate scene SRT: {e}")
 
-    # Inspect exact duration with mutagen
     audio = MP3(str(output_path))
     duration = float(audio.info.length)
 
@@ -76,27 +84,60 @@ async def generate_tts(
 
 # ── Real Stock Image Fetcher ───────────────────────────────────
 
+def _sanitize_query_candidates(raw_query: str) -> List[str]:
+    """
+    Extract progressive clean search queries from descriptive prompts.
+    Example: 'Diagram illustrating Newton third law with action reaction' ->
+    ['Newton third law action reaction', 'Newton third law', 'Newton motion']
+    """
+    # Remove filler phrases
+    cleaned = re.sub(
+        r"\b(illustration of|diagram of|photo of|picture of|showing|depicting|with|a|an|the|in|and|of|for|scene|image)\b",
+        " ",
+        raw_query,
+        flags=re.IGNORECASE,
+    )
+    # Remove punctuation
+    cleaned = re.sub(r"[^\w\s]", " ", cleaned)
+    words = [w.strip() for w in cleaned.split() if len(w.strip()) > 2]
+
+    candidates = []
+    if words:
+        # 1. First 4-5 core keywords
+        candidates.append(" ".join(words[:5]))
+        # 2. First 2-3 keywords
+        if len(words) > 2:
+            candidates.append(" ".join(words[:3]))
+        # 3. Top 2 keywords
+        candidates.append(" ".join(words[:2]))
+
+    # Deduplicate while preserving order
+    unique_candidates = []
+    for c in candidates:
+        if c and c not in unique_candidates:
+            unique_candidates.append(c)
+
+    return unique_candidates or [raw_query]
+
+
 def _fetch_from_pexels(query: str, api_key: str) -> Optional[bytes]:
     """Search and download a high-res landscape image from Pexels."""
     encoded_query = urllib.parse.quote(query)
     url = f"https://api.pexels.com/v1/search?query={encoded_query}&per_page=3&orientation=landscape"
     req = urllib.request.Request(
         url,
-        headers={
-            "Authorization": api_key,
-            "User-Agent": USER_AGENT,
-        },
+        headers={"Authorization": api_key, "User-Agent": USER_AGENT},
     )
+    ctx = _create_ssl_context()
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             photos = data.get("photos", [])
             if photos:
-                # Prefer large2x (high quality 1080p+), fallback to large or original
                 img_url = photos[0].get("src", {}).get("large2x") or photos[0].get("src", {}).get("large")
                 if img_url:
                     img_req = urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT})
-                    with urllib.request.urlopen(img_req, timeout=15) as img_resp:
+                    with urllib.request.urlopen(img_req, context=ctx, timeout=15) as img_resp:
                         return img_resp.read()
     except Exception as e:
         logger.warning(f"Pexels fetch failed for '{query}': {e}")
@@ -105,19 +146,20 @@ def _fetch_from_pexels(query: str, api_key: str) -> Optional[bytes]:
 
 def _fetch_from_wikimedia(query: str) -> Optional[bytes]:
     """
-    Search and download a free high-resolution educational image from Wikimedia Commons.
-    Requires no API key and works globally.
+    Search and download a free high-res image from Wikimedia Commons File namespace (gsrnamespace=6).
+    Uses iiurlwidth=1920 to get instant pre-rendered 1080p thumbnails.
     """
     encoded_query = urllib.parse.quote(query)
     search_url = (
-        "https://commons.wikimedia.org/w/api.php?"
-        f"action=query&generator=search&gsrsearch={encoded_query}&gsrlimit=6"
-        "&prop=imageinfo&iiprop=url|mime|size&format=json"
+        "https://commons.wikimedia.org/w/api.php?action=query&generator=search"
+        f"&gsrsearch={encoded_query}&gsrnamespace=6&gsrlimit=6"
+        "&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=1920&format=json"
     )
     req = urllib.request.Request(search_url, headers={"User-Agent": USER_AGENT})
+    ctx = _create_ssl_context()
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             pages = data.get("query", {}).get("pages", {})
 
@@ -127,21 +169,46 @@ def _fetch_from_wikimedia(query: str) -> Optional[bytes]:
                 if not imageinfo:
                     continue
                 info = imageinfo[0]
-                mime = info.get("mime", "")
-                width = info.get("width", 0)
-                # Filter for raster photos of decent resolution
-                if mime in ("image/jpeg", "image/png", "image/webp") and width >= 800:
-                    candidate_urls.append(info.get("url"))
+                mime = str(info.get("mime", "")).lower()
+                thumb_url = info.get("thumburl") or info.get("url")
 
-            for img_url in candidate_urls[:2]:
-                if not img_url:
+                # Filter out video/pdf formats
+                if any(ext in str(thumb_url).lower() for ext in (".ogv", ".pdf", ".webm", ".ogg")):
                     continue
-                img_req = urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(img_req, timeout=15) as img_resp:
-                    return img_resp.read()
+                if mime in ("application/pdf", "video/ogg", "video/webm"):
+                    continue
+
+                if thumb_url:
+                    candidate_urls.append(thumb_url)
+
+            # Download first valid candidate
+            for img_url in candidate_urls[:3]:
+                try:
+                    img_req = urllib.request.Request(img_url, headers={"User-Agent": USER_AGENT})
+                    with urllib.request.urlopen(img_req, context=ctx, timeout=15) as img_resp:
+                        img_bytes = img_resp.read()
+                        # Verify PIL can open it
+                        with Image.open(BytesIO(img_bytes)) as test_img:
+                            if test_img.size[0] > 100:
+                                return img_bytes
+                except Exception as inner_e:
+                    logger.debug(f"Candidate {img_url} download error: {inner_e}")
+                    continue
+
     except Exception as e:
         logger.warning(f"Wikimedia fetch failed for '{query}': {e}")
     return None
+
+
+def _get_caption_font(size: int = 28) -> ImageFont.ImageFont:
+    """Load clean caption font."""
+    win_dir = Path(os.environ.get("WINDIR", "C:\\Windows")) / "Fonts"
+    for cand in [FONTS_DIR / "Inter-Bold.ttf", win_dir / "segoeuib.ttf", win_dir / "arialbd.ttf", "arial.ttf"]:
+        try:
+            return ImageFont.truetype(str(cand), size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
 def _process_and_save_image(
@@ -151,47 +218,65 @@ def _process_and_save_image(
     target_width: int = VIDEO_WIDTH,
     target_height: int = VIDEO_HEIGHT,
 ) -> None:
-    """Center-crop and resize downloaded image to 1920x1080 canvas."""
-    from io import BytesIO
+    """Center-crop and resize downloaded image with sleek glassmorphism caption badge."""
     with Image.open(BytesIO(raw_data)) as img:
         img = img.convert("RGB")
         src_w, src_h = img.size
 
-        # Calculate aspect ratios to center-crop without distortion
+        # Center-crop without distortion
         target_aspect = target_width / target_height
         src_aspect = src_w / src_h
 
         if src_aspect > target_aspect:
-            # Source is wider: crop sides
             new_w = int(src_h * target_aspect)
             offset = (src_w - new_w) // 2
             crop_box = (offset, 0, offset + new_w, src_h)
         else:
-            # Source is taller: crop top/bottom
             new_h = int(src_w / target_aspect)
             offset = (src_h - new_h) // 2
             crop_box = (0, offset, src_w, offset + new_h)
 
         cropped = img.crop(crop_box).resize((target_width, target_height), Image.Resampling.LANCZOS)
 
-        # Subtle bottom vignette and caption for readability
-        if alt_text:
+        # Elegant glassmorphism caption pill at bottom center
+        if alt_text and len(alt_text.strip()) > 2:
+            caption_font = _get_caption_font(28)
+            wrapped_caption = textwrap.fill(alt_text.strip(), width=68)
+
+            dummy_draw = ImageDraw.Draw(cropped)
+            bbox = dummy_draw.textbbox((0, 0), wrapped_caption, font=caption_font, align="center")
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+
+            pill_w = min(target_width - 200, max(text_w + 64, 480))
+            pill_h = text_h + 36
+            pill_x1 = (target_width - pill_w) // 2
+            pill_y1 = target_height - pill_h - 48
+            pill_x2 = pill_x1 + pill_w
+            pill_y2 = pill_y1 + pill_h
+
             overlay = Image.new("RGBA", (target_width, target_height), (0, 0, 0, 0))
             odraw = ImageDraw.Draw(overlay)
-            # Bottom gradient bar
-            bar_height = 140
-            for y in range(target_height - bar_height, target_height):
-                alpha = int(180 * (y - (target_height - bar_height)) / bar_height)
-                odraw.line([(0, y), (target_width, y)], fill=(0, 0, 0, alpha))
 
-            # Caption text
-            try:
-                caption_font = ImageFont.truetype("segoeui.ttf", 26)
-            except Exception:
-                caption_font = ImageFont.load_default()
+            # Dark translucent card with subtle glow outline
+            odraw.rounded_rectangle(
+                [pill_x1, pill_y1, pill_x2, pill_y2],
+                radius=18,
+                fill=(15, 23, 42, 220),
+                outline=(56, 189, 248, 180),
+                width=2,
+            )
 
-            caption = textwrap.fill(alt_text, width=80)
-            odraw.text((60, target_height - 90), caption, fill=(240, 240, 240, 230), font=caption_font)
+            # Centered caption text
+            text_cy = (pill_y1 + pill_y2) // 2
+            odraw.text(
+                (target_width // 2, text_cy),
+                wrapped_caption,
+                fill=(255, 255, 255, 245),
+                font=caption_font,
+                anchor="mm",
+                align="center",
+            )
 
             cropped = Image.alpha_composite(cropped.convert("RGBA"), overlay).convert("RGB")
 
@@ -203,30 +288,21 @@ def _generate_fallback_graphic(
     alt_text: str,
     output_path: Path,
 ) -> None:
-    """Generate high-contrast graphic card if all network sources are unavailable."""
+    """Fallback graphic with balanced typography."""
     img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), (15, 23, 42))
     draw = ImageDraw.Draw(img)
 
-    # Accent decorative lines
-    draw.rounded_rectangle([120, 100, VIDEO_WIDTH - 120, VIDEO_HEIGHT - 100], radius=24, outline=(56, 189, 248), width=3)
+    draw.rounded_rectangle([180, 150, VIDEO_WIDTH - 180, VIDEO_HEIGHT - 150], radius=28, fill=(22, 30, 49), outline=(56, 189, 248), width=3)
 
-    try:
-        font_main = ImageFont.truetype("segoeuib.ttf", 52)
-        font_sub = ImageFont.truetype("segoeui.ttf", 28)
-    except Exception:
-        font_main = ImageFont.load_default()
-        font_sub = ImageFont.load_default()
+    font_main = _get_caption_font(48)
+    font_sub = _get_caption_font(28)
 
-    wrapped_q = textwrap.fill(search_query, width=36)
-    bbox = draw.textbbox((0, 0), wrapped_q, font=font_main)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((VIDEO_WIDTH - w) // 2, (VIDEO_HEIGHT - h) // 2 - 30), wrapped_q, fill=(255, 255, 255), font=font_main, align="center")
+    wrapped_q = textwrap.fill(search_query, width=38)
+    draw.text((VIDEO_WIDTH // 2, 440), wrapped_q, fill=(255, 255, 255), font=font_main, anchor="ma", align="center")
 
     if alt_text:
-        wrapped_alt = textwrap.fill(alt_text, width=60)
-        abox = draw.textbbox((0, 0), wrapped_alt, font=font_sub)
-        aw = abox[2] - abox[0]
-        draw.text(((VIDEO_WIDTH - aw) // 2, (VIDEO_HEIGHT - h) // 2 + h + 30), wrapped_alt, fill=(148, 163, 184), font=font_sub, align="center")
+        wrapped_alt = textwrap.fill(alt_text, width=54)
+        draw.text((VIDEO_WIDTH // 2, 580), wrapped_alt, fill=(148, 163, 184), font=font_sub, anchor="ma", align="center")
 
     img.save(output_path, "PNG")
 
@@ -239,23 +315,32 @@ async def fetch_stock_image(
     """
     Fetch a real stock image matching the search query.
     1. Tries Pexels API if PEXELS_API_KEY is configured.
-    2. Falls back to Wikimedia Commons API (no key required).
-    3. Falls back to styled graphic card if network fails.
+    2. Falls back to Wikimedia Commons API (no key required) with progressive keyword simplification.
+    3. Falls back to styled graphic card if all network sources fail.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Fetching real stock image for: '{search_query}'")
 
     raw_data: Optional[bytes] = None
+    query_candidates = _sanitize_query_candidates(search_query)
 
     # Step 1: Try Pexels if API key is provided
     if PEXELS_API_KEY:
-        raw_data = await asyncio.to_thread(_fetch_from_pexels, search_query, PEXELS_API_KEY)
+        for candidate in query_candidates:
+            raw_data = await asyncio.to_thread(_fetch_from_pexels, candidate, PEXELS_API_KEY)
+            if raw_data:
+                break
 
-    # Step 2: Try Wikimedia Commons if no image yet
+    # Step 2: Try Wikimedia Commons with candidate queries
     if not raw_data:
-        raw_data = await asyncio.to_thread(_fetch_from_wikimedia, search_query)
+        for candidate in query_candidates:
+            logger.info(f"Searching Wikimedia Commons for: '{candidate}'")
+            raw_data = await asyncio.to_thread(_fetch_from_wikimedia, candidate)
+            if raw_data:
+                logger.info(f"Found real stock image on Wikimedia for '{candidate}'")
+                break
 
-    # Step 3: Process downloaded image or create graceful fallback
+    # Step 3: Process downloaded image or fallback
     if raw_data:
         try:
             await asyncio.to_thread(_process_and_save_image, raw_data, output_path, alt_text)
@@ -264,7 +349,7 @@ async def fetch_stock_image(
         except Exception as e:
             logger.warning(f"Error processing image data: {e}")
 
-    # Fallback graphic
-    logger.info(f"Using fallback graphic for '{search_query}'")
+    # Fallback graphic if network completely fails
+    logger.warning(f"All image fetches failed for '{search_query}', using styled fallback")
     await asyncio.to_thread(_generate_fallback_graphic, search_query, alt_text, output_path)
     return output_path

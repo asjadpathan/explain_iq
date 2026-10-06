@@ -31,8 +31,16 @@ tmp/
 *.mp4
 media/
 
+# ── SQLite Database & WAL files ─────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
 # ── Stray files ─────────────────────────────────────────────
 python
+
 
 # ── Logs & Debugging ────────────────────────────────────────
 *.log
