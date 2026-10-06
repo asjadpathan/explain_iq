@@ -216,7 +216,14 @@ def assemble_final_video(
     if not clips:
         raise RuntimeError("No scenes could be assembled into the final video")
 
-    final = concatenate_videoclips(clips, method="compose")
+    import gc
+    gc.collect()
+
+    # Use method="chain" for sequential concatenation (much lighter on RAM than "compose")
+    try:
+        final = concatenate_videoclips(clips, method="chain")
+    except Exception:
+        final = concatenate_videoclips(clips, method="compose")
     total_duration = sum(s.audio_duration for s in scenes)
 
     # Optional background music layering with audio ducking
@@ -259,16 +266,18 @@ def assemble_final_video(
     temp_audio_file = TEMP_DIR / f"{output_path.stem}_temp_snd.m4a"
 
     try:
-        logger.info(f"Writing output video: {output_path}")
+        logger.info(f"Writing output video: {output_path} (low-memory stream)")
         final.write_videofile(
             str(output_path),
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
+            preset="ultrafast",
             temp_audiofile=str(temp_audio_file),
             remove_temp=True,
             logger=None,
-            threads=4,
+            threads=1,
+            ffmpeg_params=["-pix_fmt", "yuv420p"],
         )
     finally:
         # Guarantee cleanup of open file handles

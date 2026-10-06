@@ -27,7 +27,7 @@ VIDEO_FPS: int = int(os.getenv("VIDEO_FPS", "24"))
 PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
 
 # ── Microservice & Worker Settings ─────────────────────────────
-MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "2"))
+MAX_CONCURRENT_JOBS: int = int(os.getenv("MAX_CONCURRENT_JOBS", "1"))
 
 # ── Directory Paths & Database ─────────────────────────────────
 BASE_DIR: Path = Path(__file__).parent.resolve()
